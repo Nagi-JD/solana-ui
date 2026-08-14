@@ -14,6 +14,12 @@ import { executeBuy, createBuyConfig } from "./buy";
 import type { BundleMode } from "./buy";
 import { executeSell, createSellConfig } from "./sell";
 import { filterActiveWallets } from "./wallet";
+import {
+  sendViaProviders,
+  type ExecutionProviderConfig,
+  type ExecutionProviderName,
+  type ProviderSender,
+} from "./executionProviders";
 
 // ============================================================================
 // Shared Trading Types
@@ -111,7 +117,6 @@ export const sendTransactions = async (
   transactions: string[],
 ): Promise<SenderResult> => {
   const config = loadConfigFromCookies();
-  const endpoint = config?.sendEndpoint || DEFAULT_SEND_ENDPOINT;
 
   // Normalise to base64: if already base64 keep as-is, else convert from bs58
   const base64Txs = transactions.map((tx) => {
@@ -125,39 +130,38 @@ export const sendTransactions = async (
     }
   });
 
-  let body: Record<string, unknown>;
+  // Resolve the execution-provider config from app settings. Defaults keep the
+  // existing behaviour exactly: primary "raze" against the configured send node.
+  const providerConfig: ExecutionProviderConfig = {
+    provider: (config?.executionProvider as ExecutionProviderName) || "raze",
+    fallbackProviders: config?.fallbackProviders
+      ? (config.fallbackProviders
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean) as ExecutionProviderName[])
+      : undefined,
+    razeEndpoint: config?.sendEndpoint || DEFAULT_SEND_ENDPOINT,
+    heliusApiKey: config?.heliusApiKey,
+    heliusSenderEndpoint: config?.heliusSenderEndpoint,
+    jitoEndpoint: config?.jitoEndpoint,
+    furyEndpoint: config?.furyEndpoint,
+  };
 
-  if (base64Txs.length === 1) {
-    body = {
-      jsonrpc: "2.0",
-      id: 1,
-      method: "sendTransaction",
-      params: [base64Txs[0], { encoding: "base64" }],
-    };
-  } else {
-    body = {
-      jsonrpc: "2.0",
-      id: 1,
-      method: "sendBundle",
-      params: [base64Txs, { encoding: "base64" }],
-    };
-  }
+  // Injected transport: one HTTP POST per planned request, returns parsed JSON.
+  const sender: ProviderSender = async (req) => {
+    const response = await fetch(req.endpoint, {
+      method: "POST",
+      headers: req.headers,
+      body: JSON.stringify(req.body),
+    });
+    return (await response.json()) as unknown;
+  };
 
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
+  const outcome = await sendViaProviders(base64Txs, providerConfig, sender);
 
-  const result = (await response.json()) as JsonRpcResponse;
-
-  if (result.error) {
-    throw new Error(result.error.message || "Unknown error sending transactions");
-  }
-
-  return { rpc: result.result };
+  // Preserve the historical return shape: expose the first result under `rpc`.
+  const first = outcome.results[0] as JsonRpcResponse | undefined;
+  return { rpc: first?.result };
 };
 
 // ============================================================================

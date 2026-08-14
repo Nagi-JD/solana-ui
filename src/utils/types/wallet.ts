@@ -196,6 +196,18 @@ export interface ConfigType {
   batchDelay: string;
   /** Send node endpoint URL for broadcasting transactions */
   sendEndpoint: string;
+  /** Primary execution (transaction-landing) provider: raze | helius-sender | jito | fury */
+  executionProvider?: string;
+  /** Comma-separated ordered fallback providers (e.g. "fury"). Fury preserved as optional fallback. */
+  fallbackProviders?: string;
+  /** Helius API key for Sender/RPC (optional for Sender). Stored in browser config, never bundled. */
+  heliusApiKey?: string;
+  /** Override Helius Sender endpoint. */
+  heliusSenderEndpoint?: string;
+  /** Jito block-engine base URL (region host allowed). */
+  jitoEndpoint?: string;
+  /** Fury relay base URL for the optional fallback. */
+  furyEndpoint?: string;
 }
 
 // ============================================================================
