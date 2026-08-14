@@ -1,6 +1,6 @@
 import { Keypair, VersionedTransaction } from "@solana/web3.js";
 import bs58 from "bs58";
-import type { WalletType } from "./types";
+import type { WalletType, WalletExecutionResult } from "./types";
 import { loadConfigFromCookies } from "./storage";
 import {
   BASE_CURRENCIES,
@@ -491,6 +491,8 @@ export type InputMode = "perWallet" | "cumulative";
 export interface TradingConfig {
   tokenAddress: string;
   solAmount?: number;
+  /** Per-wallet SOL amounts for a coordinated buy, aligned to the active wallet order. */
+  amounts?: number[];
   sellPercent?: number;
   tokensAmount?: number | number[];
   sellInputMode?: InputMode;
@@ -508,6 +510,8 @@ export interface FormattedWallet {
 export interface TradingResult {
   success: boolean;
   error?: string;
+  /** Per-wallet outcome for a coordinated operation (bundle-granularity). */
+  walletResults?: WalletExecutionResult[];
 }
 
 const parseOptionalInt = (value?: string): number | undefined => {
@@ -547,9 +551,23 @@ const executeUnifiedBuy = async (
   try {
     const overrides = resolveExecutionOverrides(config);
 
+    // Per-wallet buy amounts: convert the positional `amounts` array (aligned to
+    // `wallets`) into an address-keyed map so it stays aligned when executeBuy
+    // slices wallets into batches. `amount` remains the per-wallet fallback /
+    // the value used for the SOL-vs-non-SOL branch and history logging.
+    let amountByAddress: Record<string, number> | undefined;
+    if (config.amounts && config.amounts.length === wallets.length) {
+      amountByAddress = {};
+      wallets.forEach((wallet, i) => {
+        amountByAddress![wallet.address] = config.amounts![i];
+      });
+    }
+
     const buyConfig = createBuyConfig({
       tokenAddress: config.tokenAddress,
       amount: config.solAmount!,
+      amounts: config.amounts,
+      amountByAddress,
       slippageBps: overrides.slippageBps,
       feeTipLamports: overrides.feeTipLamports,
       bundleMode: overrides.bundleMode,
@@ -599,10 +617,21 @@ const executeUnifiedSell = async (
       }
     }
 
+    // When tokensAmount is a per-wallet array (aligned to `wallets`), convert to
+    // an address-keyed map so it stays aligned across batch slicing.
+    let tokensAmountByAddress: Record<string, number> | undefined;
+    if (Array.isArray(tokensAmount) && tokensAmount.length === wallets.length) {
+      tokensAmountByAddress = {};
+      wallets.forEach((wallet, i) => {
+        tokensAmountByAddress![wallet.address] = tokensAmount[i];
+      });
+    }
+
     const sellConfig = createSellConfig({
       tokenAddress: config.tokenAddress,
       sellPercent: sellPercent,
       tokensAmount: tokensAmount,
+      tokensAmountByAddress,
       slippageBps: overrides.slippageBps,
       feeTipLamports: overrides.feeTipLamports,
       bundleMode: overrides.bundleMode,

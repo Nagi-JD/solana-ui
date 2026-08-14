@@ -61,6 +61,12 @@ export interface BuyConfig {
   inputMint?: string;
   /** Optional custom amounts per wallet (overrides amount) */
   amounts?: number[];
+  /**
+   * Optional per-wallet SOL amount keyed by wallet address. Preferred over
+   * `amounts` for coordinated multi-wallet buys: because it is keyed by address
+   * it stays correctly aligned when the executor slices wallets into batches.
+   */
+  amountByAddress?: Record<string, number>;
   /** Slippage tolerance in basis points (e.g., 100 = 1%) */
   slippageBps?: number;
   /** Fee tip in lamports (min 0.001 SOL = 1,000,000 lamports) */
@@ -88,6 +94,12 @@ export interface SellConfig {
   sellPercent: number;
   /** Specific amount of tokens to sell (alternative to percentage). Single number applies to all wallets; array is per-wallet. */
   tokensAmount?: number | number[];
+  /**
+   * Optional per-wallet token amount keyed by wallet address. Preferred over an
+   * array `tokensAmount` for coordinated multi-wallet sells: keyed by address it
+   * stays aligned when the executor slices wallets into batches.
+   */
+  tokensAmountByAddress?: Record<string, number>;
   /** Slippage tolerance in basis points (e.g., 100 = 1%) */
   slippageBps?: number;
   /** Output token mint (usually SOL) - mainly for Auto */
@@ -129,6 +141,18 @@ export interface SellBundle {
 // ============================================================================
 
 /**
+ * Per-wallet execution status for a coordinated multi-wallet operation.
+ * Structurally identical to allocation.WalletExecutionResult; declared here to
+ * keep the result types self-contained.
+ */
+export interface WalletExecutionResult {
+  address: string;
+  status: "pending" | "success" | "failed";
+  error?: string;
+  signature?: string;
+}
+
+/**
  * Result of a buy operation
  */
 export interface BuyResult {
@@ -138,6 +162,8 @@ export interface BuyResult {
   result?: unknown;
   /** Error message if operation failed */
   error?: string;
+  /** Per-wallet outcome for each wallet in the operation (bundle-granularity). */
+  walletResults?: WalletExecutionResult[];
 }
 
 /**
@@ -150,6 +176,8 @@ export interface SellResult {
   result?: unknown;
   /** Error message if operation failed */
   error?: string;
+  /** Per-wallet outcome for each wallet in the operation (bundle-granularity). */
+  walletResults?: WalletExecutionResult[];
 }
 
 // ============================================================================

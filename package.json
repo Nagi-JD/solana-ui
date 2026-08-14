@@ -10,7 +10,9 @@
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
     "analyze": "npx vite-bundle-analyzer",
-    "generate-html": "node scripts/generate-html.js"
+    "generate-html": "node scripts/generate-html.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@google/model-viewer": "^4.1.0",
@@ -59,7 +61,8 @@
     "vite": "^6.4.0",
     "vite-bundle-analyzer": "^0.7.0",
     "vite-plugin-checker": "^0.11.0",
-    "vite-plugin-node-polyfills": "^0.24.0"
+    "vite-plugin-node-polyfills": "^0.24.0",
+    "vitest": "^2.1.9"
   },
   "overrides": {
     "node-fetch": "^2.7.0"

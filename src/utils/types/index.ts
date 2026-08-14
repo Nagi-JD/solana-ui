@@ -105,6 +105,7 @@ export type {
   SellBundle,
   BuyResult,
   SellResult,
+  WalletExecutionResult,
   TradeHistoryEntry,
   AddTradeHistoryInput,
   ValidationResult,

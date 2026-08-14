@@ -14,6 +14,7 @@ import type {
   SellResult,
 } from "./types";
 import { parseTransactionBundles, type RawTransactionResponse } from "./transactionParsing";
+import { buildPendingStatuses, applyBundleResult } from "./allocation";
 import {
   addTradeHistory,
   checkRateLimit,
@@ -54,7 +55,21 @@ const getPartiallyPreparedSellTransactions = async (
       walletAddresses: wallets.map((wallet) => wallet.address),
     };
 
-    if (sellConfig.tokensAmount !== undefined) {
+    // Per-wallet token amounts. Prefer the address-keyed map so alignment
+    // survives batch/subset slicing; fall back to the array only when its
+    // length matches this call's wallet subset; otherwise pass through scalar
+    // tokensAmount or percentage unchanged.
+    if (sellConfig.tokensAmountByAddress) {
+      requestBody["tokensAmount"] = wallets.map(
+        (wallet) => sellConfig.tokensAmountByAddress![wallet.address] ?? 0,
+      );
+    } else if (
+      Array.isArray(sellConfig.tokensAmount) &&
+      sellConfig.tokensAmount.length !== wallets.length
+    ) {
+      // Misaligned positional array for this subset -> fall back to percentage.
+      requestBody["percentage"] = sellConfig.sellPercent;
+    } else if (sellConfig.tokensAmount !== undefined) {
       requestBody["tokensAmount"] = sellConfig.tokensAmount;
     } else {
       requestBody["percentage"] = sellConfig.sellPercent;
@@ -105,6 +120,7 @@ const executeSellSingleMode = async (
   const results: unknown[] = [];
   let successfulWallets = 0;
   let failedWallets = 0;
+  let statuses = buildPendingStatuses(wallets.map((w) => w.address));
 
   for (let i = 0; i < wallets.length; i++) {
     const wallet = wallets[i];
@@ -115,6 +131,9 @@ const executeSellSingleMode = async (
 
       if (partiallyPreparedBundles.length === 0) {
         failedWallets++;
+        statuses = applyBundleResult(statuses, [wallet.address], false, {
+          error: "No transactions generated",
+        });
         continue;
       }
 
@@ -131,6 +150,7 @@ const executeSellSingleMode = async (
       }
 
       successfulWallets++;
+      statuses = applyBundleResult(statuses, [wallet.address], true);
 
       if (i < wallets.length - 1) {
         await new Promise((resolve) =>
@@ -140,8 +160,11 @@ const executeSellSingleMode = async (
           ),
         );
       }
-    } catch {
+    } catch (err) {
       failedWallets++;
+      statuses = applyBundleResult(statuses, [wallet.address], false, {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
@@ -149,6 +172,7 @@ const executeSellSingleMode = async (
     success: successfulWallets > 0,
     result: results,
     error: createBatchErrorMessage(successfulWallets, failedWallets),
+    walletResults: statuses,
   };
 };
 
@@ -164,6 +188,7 @@ const executeSellBatchMode = async (
   const results: unknown[] = [];
   let successfulBatches = 0;
   let failedBatches = 0;
+  let statuses = buildPendingStatuses(wallets.map((w) => w.address));
 
   const batches: WalletSell[][] = [];
   for (let i = 0; i < wallets.length; i += batchSize) {
@@ -172,6 +197,7 @@ const executeSellBatchMode = async (
 
   for (let i = 0; i < batches.length; i++) {
     const batch = batches[i];
+    const batchAddresses = batch.map((w) => w.address);
 
     try {
       const partiallyPreparedBundles =
@@ -179,6 +205,9 @@ const executeSellBatchMode = async (
 
       if (partiallyPreparedBundles.length === 0) {
         failedBatches++;
+        statuses = applyBundleResult(statuses, batchAddresses, false, {
+          error: "No transactions generated",
+        });
         continue;
       }
 
@@ -195,12 +224,16 @@ const executeSellBatchMode = async (
       }
 
       successfulBatches++;
+      statuses = applyBundleResult(statuses, batchAddresses, true);
 
       if (i < batches.length - 1) {
         await new Promise((resolve) => setTimeout(resolve, batchDelay));
       }
-    } catch {
+    } catch (err) {
       failedBatches++;
+      statuses = applyBundleResult(statuses, batchAddresses, false, {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
@@ -208,6 +241,7 @@ const executeSellBatchMode = async (
     success: successfulBatches > 0,
     result: results,
     error: createBatchErrorMessage(successfulBatches, failedBatches),
+    walletResults: statuses,
   };
 };
 
@@ -220,15 +254,31 @@ const executeSellAllInOneMode = async (
 ): Promise<SellResult> => {
   const maxWallets = 4;
   const cappedWallets = wallets.slice(0, maxWallets);
+  const cappedAddresses = cappedWallets.map((w) => w.address);
+  const droppedAddresses = wallets.slice(maxWallets).map((w) => w.address);
+  let statuses = buildPendingStatuses(wallets.map((w) => w.address));
+
+  // Wallets beyond the all-in-one cap are not executed — mark them failed
+  // rather than silently dropping them from the reported outcome.
+  if (droppedAddresses.length > 0) {
+    statuses = applyBundleResult(statuses, droppedAddresses, false, {
+      error: `Not executed: all-in-one mode caps at ${maxWallets} wallets`,
+    });
+  }
+
   const partiallyPreparedBundles = await getPartiallyPreparedSellTransactions(
     cappedWallets,
     sellConfig,
   );
 
   if (partiallyPreparedBundles.length === 0) {
+    statuses = applyBundleResult(statuses, cappedAddresses, false, {
+      error: "No transactions generated",
+    });
     return {
       success: false,
       error: "No transactions generated.",
+      walletResults: statuses,
     };
   }
 
@@ -239,7 +289,10 @@ const executeSellAllInOneMode = async (
   );
 
   if (signedBase64Txs.length === 0) {
-    return { success: false, error: "Failed to sign any transactions" };
+    statuses = applyBundleResult(statuses, cappedAddresses, false, {
+      error: "Failed to sign any transactions",
+    });
+    return { success: false, error: "Failed to sign any transactions", walletResults: statuses };
   }
 
   const bundlePromises = [signedBase64Txs].map(async (txs, index) => {
@@ -259,10 +312,15 @@ const executeSellAllInOneMode = async (
   const { success, results, successCount, failCount } =
     processBatchResults(senderResults);
 
+  statuses = applyBundleResult(statuses, cappedAddresses, success, {
+    error: success ? undefined : "Bundle send failed",
+  });
+
   return {
     success,
     result: results,
     error: createBatchErrorMessage(successCount, failCount),
+    walletResults: statuses,
   };
 };
 
@@ -448,6 +506,7 @@ export const createSellConfig = (params: {
   tokenAddress: string;
   sellPercent?: number;
   tokensAmount?: number | number[];
+  tokensAmountByAddress?: Record<string, number>;
   slippageBps?: number;
   outputMint?: string;
   feeTipLamports?: number;
@@ -458,6 +517,7 @@ export const createSellConfig = (params: {
   tokenAddress: params.tokenAddress,
   sellPercent: params.sellPercent || 0,
   tokensAmount: params.tokensAmount,
+  tokensAmountByAddress: params.tokensAmountByAddress,
   slippageBps: params.slippageBps,
   outputMint: params.outputMint,
   feeTipLamports: params.feeTipLamports,

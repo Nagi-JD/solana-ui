@@ -16,9 +16,10 @@ import { countActiveWallets, filterActiveWallets, toggleWallet } from "./utils/w
 import { saveWalletsToCookies } from "./utils/storage";
 import FloatingTradingCard from "./components/trading/FloatingTradingCard";
 import TradingCard from "./components/trading/TradingForm";
+import WalletAllocationPanel from "./components/trading/WalletAllocationPanel";
 import WalletSelectorPopup from "./components/trading/WalletSelectorPopup";
 import { PageBackground } from "./components/Styles";
-import { getLatestTrades, executeTrade, type TradeHistoryEntry, type InputMode } from "./utils/trading";
+import { getLatestTrades, executeTrade, type TradeHistoryEntry, type InputMode, type TradingResult } from "./utils/trading";
 import { useLimitOrderMonitor, getActiveOrdersForToken, cancelLimitOrder, formatLimitPrice, formatDistance } from "./utils/limitOrders";
 import type { LimitOrder } from "./utils/types";
 
@@ -655,6 +656,16 @@ export const ActionsPage: React.FC<ActionsPageProps> = ({
       sellAmount?: string,
       tokenAddressParam?: string,
       sellInputMode?: InputMode,
+      allocation?: {
+        /** Per-wallet SOL amounts aligned to filterActiveWallets(wallets) order (buy). */
+        amounts?: number[];
+        /** Per-wallet token amounts aligned to active order, or a scalar (sell). */
+        tokensAmount?: number | number[];
+        /** Explicit sell percentage (sell). */
+        sellPercent?: number;
+        /** Callback invoked with the full result (incl. per-wallet outcomes). */
+        onResult?: (result: TradingResult) => void;
+      },
     ) => {
       // Use tokenAddressParam if provided, otherwise use the component's tokenAddress
       const tokenAddressToUse = tokenAddressParam || tokenAddress;
@@ -668,9 +679,52 @@ export const ActionsPage: React.FC<ActionsPageProps> = ({
       const dexToUse = dex || selectedDex;
 
       // Create trading config
-      const config: { tokenAddress: string; solAmount?: number; sellPercent?: number; tokensAmount?: number | number[]; sellInputMode?: InputMode } = {
+      const config: { tokenAddress: string; solAmount?: number; amounts?: number[]; sellPercent?: number; tokensAmount?: number | number[]; sellInputMode?: InputMode } = {
         tokenAddress: tokenAddressToUse,
       };
+
+      // Explicit per-wallet allocation overrides the uniform amount logic below.
+      // Amounts are aligned to filterActiveWallets(wallets) order (the same order
+      // executeTrade uses internally), so they stay in lockstep with wallets.
+      if (allocation) {
+        if (isBuyMode) {
+          config.solAmount = parseFloat(buyAmount || "0");
+          if (allocation.amounts) config.amounts = allocation.amounts;
+          setIsLoading(true);
+          void executeTrade(dexToUse, wallets, config, true, baseCurrencyBalances, tokenBalances)
+            .then((result) => {
+              allocation.onResult?.(result);
+              if (result.success) showToast("Buy successful", "success");
+              else showToast(result.error || "Buy failed", "error");
+            })
+            .catch((error: unknown) => {
+              const msg = error instanceof Error ? error.message : String(error);
+              allocation.onResult?.({ success: false, error: msg });
+              showToast(`Error: ${msg}`, "error");
+            })
+            .finally(() => setIsLoading(false));
+          return;
+        }
+        if (allocation.tokensAmount !== undefined) {
+          config.tokensAmount = allocation.tokensAmount;
+        } else if (allocation.sellPercent !== undefined) {
+          config.sellPercent = allocation.sellPercent;
+        }
+        setIsLoading(true);
+        void executeTrade(dexToUse, wallets, config, false, baseCurrencyBalances, tokenBalances)
+          .then((result) => {
+            allocation.onResult?.(result);
+            if (result.success) showToast("Sell successful", "success");
+            else showToast(result.error || "Sell failed", "error");
+          })
+          .catch((error: unknown) => {
+            const msg = error instanceof Error ? error.message : String(error);
+            allocation.onResult?.({ success: false, error: msg });
+            showToast(`Error: ${msg}`, "error");
+          })
+          .finally(() => setIsLoading(false));
+        return;
+      }
 
       if (isBuyMode) {
         config.solAmount = parseFloat(buyAmount || "0");
@@ -1007,6 +1061,16 @@ export const ActionsPage: React.FC<ActionsPageProps> = ({
             onOpenFloating={handleOpenFloating}
             isFloatingCardOpen={isFloatingCardOpen}
             solPrice={iframeData?.solPrice || null}
+          />
+        )}
+
+        {/* Coordinated multi-wallet allocation (supply-priority selection, groups) */}
+        {tokenAddress && (
+          <WalletAllocationPanel
+            tokenAddress={tokenAddress}
+            selectedDex={selectedDex}
+            handleTradeSubmit={handleTradeSubmit}
+            isLoading={isLoading}
           />
         )}
 
