@@ -144,6 +144,8 @@ export const sendTransactions = async (
     heliusApiKey: config?.heliusApiKey,
     heliusSenderEndpoint: config?.heliusSenderEndpoint,
     jitoEndpoint: config?.jitoEndpoint,
+    jupiterApiKey: config?.jupiterApiKey,
+    jupiterEndpoint: config?.jupiterEndpoint,
     furyEndpoint: config?.furyEndpoint,
   };
 

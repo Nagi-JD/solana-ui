@@ -6,6 +6,7 @@ import {
   sendViaProviders,
   DEFAULT_HELIUS_SENDER_ENDPOINT,
   DEFAULT_JITO_ENDPOINT,
+  DEFAULT_JUPITER_ENDPOINT,
   type ExecutionProviderConfig,
   type ProviderRequest,
 } from "./executionProviders";
@@ -45,6 +46,13 @@ describe("resolveProviderChain", () => {
       fallbackProviders: ["fury"],
     });
     expect(chain[chain.length - 1]).toBe("fury");
+  });
+
+  it("supports jupiter as primary or fallback", () => {
+    expect(resolveProviderChain({ provider: "jupiter" })).toEqual(["jupiter"]);
+    expect(
+      resolveProviderChain({ provider: "helius-sender", fallbackProviders: ["jupiter", "fury"] }),
+    ).toEqual(["helius-sender", "jupiter", "fury"]);
   });
 });
 
@@ -91,9 +99,33 @@ describe("planRequests", () => {
     expect(req.body).toEqual({ transactions: ["TX1", "TX2"] });
   });
 
+  it("jupiter: one request per tx, default endpoint, x-api-key header, base64 skipPreflight", () => {
+    const reqs = planRequests("jupiter", ["TX1", "TX2"], cfg({ jupiterApiKey: "JKEY" }));
+    expect(reqs).toHaveLength(2);
+    expect(reqs[0].endpoint).toBe(DEFAULT_JUPITER_ENDPOINT);
+    expect(reqs[0].headers["x-api-key"]).toBe("JKEY");
+    expect(reqs[0].body).toMatchObject({
+      method: "sendTransaction",
+      params: ["TX1", { encoding: "base64", skipPreflight: true, maxRetries: 0 }],
+    });
+  });
+
+  it("jupiter: respects a custom endpoint override", () => {
+    const [req] = planRequests(
+      "jupiter",
+      ["TX1"],
+      cfg({ jupiterApiKey: "JKEY", jupiterEndpoint: "https://custom.tx.jup.ag" }),
+    );
+    expect(req.endpoint).toBe("https://custom.tx.jup.ag");
+  });
+
   it("throws when a required endpoint is missing", () => {
     expect(() => planRequests("fury", ["TX1"], {})).toThrow(/furyEndpoint/);
     expect(() => planRequests("raze", ["TX1"], {})).toThrow(/razeEndpoint/);
+  });
+
+  it("throws when jupiter's required api key is missing (never silently sent unauthenticated)", () => {
+    expect(() => planRequests("jupiter", ["TX1"], cfg())).toThrow(/jupiterApiKey/);
   });
 
   it("throws on empty tx list", () => {
@@ -185,5 +217,21 @@ describe("sendViaProviders (orchestration with fallback)", () => {
     const { sender, calls } = makeSender(() => ({ result: "sig" }));
     await sendViaProviders(["TX1", "TX2", "TX3"], cfg({ provider: "helius-sender" }), sender);
     expect(calls).toHaveLength(3);
+  });
+
+  it("falls back from jupiter to fury when jupiter rejects a tip-less transaction", async () => {
+    const { sender, calls } = makeSender((req) => {
+      if (req.endpoint.includes("tx.jup.ag")) {
+        return { error: { message: "Transaction must include a Jupiter tip instruction" } };
+      }
+      return { result: "sig-from-fury" };
+    });
+    const out = await sendViaProviders(
+      ["TX1"],
+      cfg({ provider: "jupiter", fallbackProviders: ["fury"], jupiterApiKey: "JKEY" }),
+      sender,
+    );
+    expect(out.provider).toBe("fury");
+    expect(calls[0].headers["x-api-key"]).toBe("JKEY");
   });
 });

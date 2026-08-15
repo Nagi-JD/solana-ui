@@ -8,6 +8,9 @@
  *   - "raze"          — the existing Raze send node (JSON-RPC, default)
  *   - "helius-sender" — Helius Sender (multi-path routing, per-tx sendTransaction)
  *   - "jito"          — Jito block engine (atomic bundles / single tx)
+ *   - "jupiter"        — tx.jup.ag (Jupiter's Solana-RPC-compatible landing
+ *                        service, per-tx sendTransaction; requires the signed
+ *                        tx to already carry a Jupiter tip instruction)
  *   - "fury"          — Fury Bot relay (preserved as an optional fallback)
  *
  * Providers do NOT build swap transactions — that remains the job of the
@@ -19,10 +22,11 @@
  * hardcoded — API keys and endpoints come from config passed in by the caller.
  */
 
-export type ExecutionProviderName = "raze" | "helius-sender" | "jito" | "fury";
+export type ExecutionProviderName = "raze" | "helius-sender" | "jito" | "jupiter" | "fury";
 
 export const DEFAULT_HELIUS_SENDER_ENDPOINT = "https://sender.helius-rpc.com/fast";
 export const DEFAULT_JITO_ENDPOINT = "https://mainnet.block-engine.jito.wtf";
+export const DEFAULT_JUPITER_ENDPOINT = "https://tx.jup.ag";
 
 /** Provider selection + endpoints. All fields optional; sensible defaults apply. */
 export interface ExecutionProviderConfig {
@@ -41,6 +45,10 @@ export interface ExecutionProviderConfig {
   heliusSenderEndpoint?: string;
   /** Jito block-engine base URL (region-specific hosts allowed). */
   jitoEndpoint?: string;
+  /** Jupiter API key for tx.jup.ag (required by that endpoint). NEVER hardcode — supply from config/env. */
+  jupiterApiKey?: string;
+  /** Override for the tx.jup.ag endpoint. */
+  jupiterEndpoint?: string;
   /** Fury relay base URL (e.g. https://de.fury.bot or a self-hosted server). */
   furyEndpoint?: string;
 }
@@ -163,6 +171,22 @@ export const planRequests = (
           body: jsonRpc("sendBundle", [base64Txs, { encoding: "base64" }]),
         },
       ];
+    }
+
+    case "jupiter": {
+      const apiKey = config.jupiterApiKey;
+      if (!apiKey) throw new Error("jupiter provider requires jupiterApiKey");
+      const endpoint = config.jupiterEndpoint || DEFAULT_JUPITER_ENDPOINT;
+      // tx.jup.ag is send-only and per-tx (no bundle equivalent); the signed
+      // tx must already carry a Jupiter tip instruction or it is rejected.
+      return base64Txs.map((tx) => ({
+        endpoint,
+        headers: { ...jsonHeaders, "x-api-key": apiKey },
+        body: jsonRpc("sendTransaction", [
+          tx,
+          { encoding: "base64", skipPreflight: true, maxRetries: 0 },
+        ]),
+      }));
     }
 
     case "fury": {

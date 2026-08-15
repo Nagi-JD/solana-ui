@@ -196,7 +196,7 @@ export interface ConfigType {
   batchDelay: string;
   /** Send node endpoint URL for broadcasting transactions */
   sendEndpoint: string;
-  /** Primary execution (transaction-landing) provider: raze | helius-sender | jito | fury */
+  /** Primary execution (transaction-landing) provider: raze | helius-sender | jito | jupiter | fury */
   executionProvider?: string;
   /** Comma-separated ordered fallback providers (e.g. "fury"). Fury preserved as optional fallback. */
   fallbackProviders?: string;
@@ -206,6 +206,10 @@ export interface ConfigType {
   heliusSenderEndpoint?: string;
   /** Jito block-engine base URL (region host allowed). */
   jitoEndpoint?: string;
+  /** Jupiter API key for tx.jup.ag landing (required by that endpoint). Stored in browser config, never bundled. */
+  jupiterApiKey?: string;
+  /** Override tx.jup.ag endpoint. */
+  jupiterEndpoint?: string;
   /** Fury relay base URL for the optional fallback. */
   furyEndpoint?: string;
 }
