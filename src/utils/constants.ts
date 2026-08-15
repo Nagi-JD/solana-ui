@@ -115,6 +115,14 @@ export const RAZE_SERVERS: readonly RazeServerDefinition[] = [
     flag: "\u{1F1EC}\u{1F1E7}",
     supportsSending: false,
   },
+  {
+    id: "self",
+    name: "Self-Hosted",
+    url: "https://95-179-244-177.nip.io",
+    region: "SELF",
+    flag: "\u{1F680}",
+    supportsSending: true,
+  },
 ] as const;
 
 export const TRADING_SERVERS = RAZE_SERVERS.map(
